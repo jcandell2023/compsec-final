@@ -64,6 +64,9 @@ async function createSign() {
 }
 
 function getRoomKeys(roomname) {
+    if (!(roomname in rooms)) {
+        return {}
+    }
     const roomUsers = rooms[roomname].users
     const roomKeys = {}
     for (let user of roomUsers) {
@@ -117,14 +120,14 @@ io.on('connection', (socket) => {
         const { id, sign } = await createSign()
         io.in(roomname).emit('serverMessage', {
             message: `${user} has joined the chat`,
-            id,
-            sign,
+            id: id,
+            sign: sign,
         })
         io.emit('rooms_update', { rooms })
         io.in(roomname).emit('user_update', {
             roomInfo: rooms[roomname],
-            id,
-            sign,
+            id: id,
+            sign: sign,
             keys: getRoomKeys(roomname),
         })
     })
@@ -208,10 +211,12 @@ io.on('connection', (socket) => {
             if (rooms[roomname].users.length == 0) {
                 delete rooms[roomname]
                 io.emit('rooms_update', { rooms })
-                return
             }
         }
         delete keys[socket.id]
+        if (socket.nickname in users) {
+            delete users[socket.nickname]
+        }
         const { id, sign } = await createSign()
         io.in(roomname).emit('user_update', {
             roomInfo: rooms[roomname],

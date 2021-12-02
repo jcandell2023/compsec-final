@@ -14,18 +14,50 @@ function formatMessage(message, user, isPrivate) {
     if (isPrivate) {
         user += ' (private)'
     }
-    return `<p><span>${user}:</span>${message}</p>`
+    return `<span class="align-middle"><strong>${user}:</strong> ${message}</span>`
 }
 
-function encryptMessage(message, key) {
-    return message
-}
+async function encryptMessage(message, key) {
+    let cipher = await crypto.subtle.encrypt(
+        {
+            name: 'RSA-OAEP',
+        },
+        key,
+        getMessageEncoding(message)
+    )
+    //cipher = new Uint8Array(cipher)
 
-function decrpytMessage(cipher) {
+    //cipher = [...cipher]
+    console.log(cipher)
     return cipher
 }
 
-function generateKeys() {}
+async function decrpytMessage(cipher) {
+    console.log(cipher)
+    return getMessageDecoding(
+        await crypto.subtle.decrypt(
+            {
+                name: 'RSA-OAEP',
+            },
+            privateKey,
+            cipher
+        )
+    )
+}
+
+async function generateKeys() {
+    let keys = await crypto.subtle.generateKey(
+        {
+            name: 'RSA-OAEP',
+            modulusLength: 4096,
+            publicExponent: new Uint8Array([1, 0, 1]),
+            hash: 'SHA-256',
+        },
+        true,
+        ['encrypt', 'decrypt']
+    )
+    return keys
+}
 
 function getMessageEncoding(str) {
     let enc = new TextEncoder()
@@ -36,5 +68,3 @@ function getMessageDecoding(input) {
     let dec = new TextDecoder()
     return dec.decode(input)
 }
-
-

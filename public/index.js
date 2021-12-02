@@ -2,8 +2,6 @@ const socket = io()
 let users = {}
 
 let serverKey
-let privateKey
-let publicKey
 
 async function checkSign(id, sign) {
     let verified = await crypto.subtle.verify(
@@ -14,6 +12,8 @@ async function checkSign(id, sign) {
     )
     return verified
 }
+
+let privateKey, publicKey
 
 crypto.subtle
     .importKey(
@@ -51,7 +51,9 @@ crypto.subtle
     .then((keys) => {
         privateKey = keys.privateKey
         publicKey = keys.publicKey
-        socket.emit('publicKey', { key: publicKey })
+        crypto.subtle.exportKey('jwk', publicKey).then((exportKey) => {
+            socket.emit('publicKey', { key: exportKey })
+        })
     })
 
 socket.on('test', ({ signature, message }) => {
@@ -67,20 +69,22 @@ socket.on('test', ({ signature, message }) => {
 })
 
 //when a message is recieved from the server
-socket.on('encryptedMessage', ({ user, cipher, isPrivate, id, sign }) => {
-    if(!checkSign(id,sign)){
+socket.on('encryptedMessage', async ({ user, cipher, isPrivate, id, sign }) => {
+    if (!checkSign(id, sign)) {
         return
     }
-    const div = document.createElement('div')
-    message = decrpytMessage(cipher)
-    div.innerHTML = formatMessage(message, user, isPrivate)
-    document.getElementById('chatlog').appendChild(div)
+    const listItem = document.createElement('li')
+    listItem.classList.add('list-group-item')
+    message = await decrpytMessage(cipher)
+    listItem.innerHTML = formatMessage(message, user, isPrivate)
+    document.getElementById('chatlog').prepend(listItem)
 })
 
 socket.on('serverMessage', ({ message }) => {
-    const div = document.createElement('div')
-    div.innerHTML = formatMessage(message, 'Chatbot', false)
-    document.getElementById('chatlog').appendChild(div)
+    const listItem = document.createElement('li')
+    listItem.classList.add('list-group-item')
+    listItem.innerHTML = formatMessage(message, 'Chatbot', false)
+    document.getElementById('chatlog').appendChild(listItem)
 })
 
 //when there is an update to the rooms list
@@ -99,9 +103,42 @@ socket.on('rooms_update', ({ rooms }) => {
 })
 
 //when there is an update to the user list for this room
-socket.on('user_update', (roomInfo, isAdmin) => {
-    users = { Jeff: '12345', Joe: '67890' }
-    //users = keys thing
+socket.on('user_update', async ({ roomInfo, id, sign, keys }) => {
+    if (!checkSign(id, sign)) {
+        return
+    }
+    document.getElementById('userList').innerHTML = ''
+    document.getElementById('privateUser').innerHTML = ''
+    let newUsers = {}
+    for (let user in keys) {
+        if (users[user]) {
+            newUsers[user] = users[users]
+        } else {
+            let newKey = await crypto.subtle.importKey(
+                'jwk',
+                keys[user],
+                {
+                    name: 'RSA-OAEP',
+                    modulusLength: 4096,
+                    publicExponent: new Uint8Array([1, 0, 1]),
+                    hash: 'SHA-256',
+                },
+                true,
+                ['encrypt']
+            )
+            newUsers[user] = newKey
+        }
+        let listItem = document.createElement('li')
+        listItem.innerText = user
+        listItem.classList.add('list-group-item')
+        document.getElementById('userList').appendChild(listItem)
+        let select = document.createElement('option')
+        select.innerText = user
+        select.value = user
+        document.getElementById('privateUser').appendChild(select)
+    }
+    users = newUsers
+    document.getElementById('limit').innerText = roomInfo.limit
 })
 
 //when this user is removed from the room
@@ -116,8 +153,9 @@ socket.on('join_fail', (error) => {
 })
 
 //sends a message to the user, encrypting using their publiv key
-function sendMessage(message, user, key, isPrivate) {
-    let cipher = encryptMessage(message, key)
+async function sendMessage(message, user, isPrivate) {
+    let key = users[user]
+    let cipher = await encryptMessage(message, key)
     socket.emit('message', {
         cipher,
         user,
@@ -130,7 +168,7 @@ function sendMassMessage() {
     let message = document.getElementById('message_input').value
     document.getElementById('message_input').value = ''
     for (let user in users) {
-        sendMessage(message, user, users[user], false)
+        sendMessage(message, user, false)
     }
 }
 
