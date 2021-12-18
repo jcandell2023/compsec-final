@@ -28,12 +28,10 @@ async function encryptMessage(message, key) {
     //cipher = new Uint8Array(cipher)
 
     //cipher = [...cipher]
-    console.log(cipher)
     return cipher
 }
 
 async function decrpytMessage(cipher) {
-    console.log(cipher)
     return getMessageDecoding(
         await crypto.subtle.decrypt(
             {

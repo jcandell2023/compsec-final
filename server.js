@@ -12,7 +12,9 @@ app.use(express.static('public'))
 const rooms = {}
 const keys = {}
 const users = {}
-let privateKey
+let privateSignKey
+let privateCryptKey
+let publicCryptKey
 let signature
 subtle
     .importKey(
@@ -41,10 +43,25 @@ subtle
         ['sign']
     )
     .then((key) => {
-        privateKey = key
-        subtle
-            .sign('RSASSA-PKCS1-v1_5', privateKey, getMessageEncoding('hello'))
-            .then((data) => (signature = data))
+        privateSignKey = key
+    })
+
+subtle
+    .generateKey(
+        {
+            name: 'RSA-OAEP',
+            modulusLength: 4096,
+            publicExponent: new Uint8Array([1, 0, 1]),
+            hash: 'SHA-256',
+        },
+        true,
+        ['encrypt', 'decrypt']
+    )
+    .then((data) => {
+        privateCryptKey = data.privateKey
+        subtle.exportKey('jwk', data.publicKey).then((exportKey) => {
+            publicCryptKey = exportKey
+        })
     })
 
 function getMessageEncoding(str) {
@@ -59,8 +76,21 @@ function getMessageDecoding(input) {
 
 async function createSign() {
     let id = crypto.randomUUID()
-    let sign = await subtle.sign('RSASSA-PKCS1-v1_5', privateKey, getMessageEncoding(id))
+    let sign = await subtle.sign(
+        'RSASSA-PKCS1-v1_5',
+        privateSignKey,
+        getMessageEncoding(id)
+    )
     return { id, sign }
+}
+
+async function signData(data) {
+    let sign = await subtle.sign(
+        'RSASSA-PKCS1-v1_5',
+        privateSignKey,
+        getMessageEncoding(data)
+    )
+    return sign
 }
 
 function getRoomKeys(roomname) {
@@ -80,12 +110,11 @@ function checkPassword(password, room) {
     return password == rooms[room].password
 }
 
-io.on('connection', (socket) => {
+io.on('connection', async (socket) => {
     //sends rooms to the user who just joined
     socket.emit('rooms_update', { rooms })
-    socket.on('test', () => {
-        socket.emit('test', { signature, message: 'hello' })
-    })
+    const keySign = await signData(publicCryptKey)
+    socket.emit('encrypt_key', { key: publicCryptKey, sign: keySign })
 
     //when a message is recieved it sends it to the correct user
     socket.on('message', async ({ user, cipher, isPrivate }) => {
@@ -113,7 +142,6 @@ io.on('connection', (socket) => {
         users[user] = socket.id
         rooms[roomname] = {
             users: [user],
-            admin: socket.id,
             limit: limit,
             password: password.trim(),
         }

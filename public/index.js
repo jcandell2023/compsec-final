@@ -2,13 +2,14 @@ const socket = io()
 let users = {}
 
 let serverKey
+let serverCryptKey
 
-async function checkSign(id, sign) {
+async function checkSign(data, sign) {
     let verified = await crypto.subtle.verify(
         'RSASSA-PKCS1-v1_5',
         serverKey,
         sign,
-        getMessageEncoding(id)
+        getMessageEncoding(data)
     )
     return verified
 }
@@ -51,21 +52,30 @@ crypto.subtle
     .then((keys) => {
         privateKey = keys.privateKey
         publicKey = keys.publicKey
+        document.getElementById('loading').style.display = 'none'
+        document.getElementById('join-screen').style.display = 'block'
         crypto.subtle.exportKey('jwk', publicKey).then((exportKey) => {
             socket.emit('publicKey', { key: exportKey })
         })
     })
 
-socket.on('test', ({ signature, message }) => {
-    crypto.subtle
-        .verify('RSASSA-PKCS1-v1_5', serverKey, signature, getMessageEncoding(message))
-        .then((verified) => {
-            if (verified) {
-                console.log('woooooooooooooo')
-            } else {
-                console.log('you suck')
-            }
-        })
+socket.on('encrypt_key', async ({ key, sign }) => {
+    let verified = await checkSign(key, sign)
+    if (!verified) {
+        return
+    }
+    serverCryptKey = await crypto.subtle.importKey(
+        'jwk',
+        key,
+        {
+            name: 'RSA-OAEP',
+            modulusLength: 4096,
+            publicExponent: new Uint8Array([1, 0, 1]),
+            hash: 'SHA-256',
+        },
+        true,
+        ['encrypt']
+    )
 })
 
 //when a message is recieved from the server
@@ -84,7 +94,7 @@ socket.on('serverMessage', ({ message }) => {
     const listItem = document.createElement('li')
     listItem.classList.add('list-group-item')
     listItem.innerHTML = formatMessage(message, 'Chatbot', false)
-    document.getElementById('chatlog').appendChild(listItem)
+    document.getElementById('chatlog').prepend(listItem)
 })
 
 //when there is an update to the rooms list
@@ -107,12 +117,13 @@ socket.on('user_update', async ({ roomInfo, id, sign, keys }) => {
     if (!checkSign(id, sign)) {
         return
     }
+    console.log(keys)
     document.getElementById('userList').innerHTML = ''
     document.getElementById('privateUser').innerHTML = ''
     let newUsers = {}
     for (let user in keys) {
         if (users[user]) {
-            newUsers[user] = users[users]
+            newUsers[user] = users[user]
         } else {
             let newKey = await crypto.subtle.importKey(
                 'jwk',
@@ -178,6 +189,10 @@ function sendPrivateMessage() {
     document.getElementById('message_input').value = ''
     let recipient = document.getElementById('privateUser').value
     sendMessage(message, recipient, true)
+    const listItem = document.createElement('li')
+    listItem.classList.add('list-group-item')
+    listItem.innerHTML = formatMessage(message, `You to ${recipient}`, true)
+    document.getElementById('chatlog').prepend(listItem)
 }
 
 //creates a room
