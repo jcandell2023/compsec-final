@@ -101,7 +101,7 @@ socket.on('rooms_update', async ({ rooms }) => {
     for (let i in rooms) {
         let optionEl = document.createElement('option')
         optionEl.value = i
-        if (rooms[i].isPrivate) {
+        if (rooms[i].password) {
             optionEl.innerText = `${i} - Private`
         } else {
             optionEl.innerText = i

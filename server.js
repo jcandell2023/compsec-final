@@ -122,7 +122,7 @@ async function decryptData(data) {
 async function getHash(password) {
     const buffer = await subtle.digest('SHA-256', getMessageEncoding(password))
     const array = Array.from(new Uint8Array(buffer))
-    const hash = array.map(b => b.toString(16).padStart(2, '0')).join('')
+    const hash = array.map((b) => b.toString(16).padStart(2, '0')).join('')
     return hash
 }
 
@@ -183,7 +183,7 @@ io.on('connection', async (socket) => {
         rooms[roomname] = {
             users: [user],
             limit: limit,
-            password: passHash,
+            password: trimPass == '' ? '' : passHash,
         }
         const message = `${user} has joined the chat`
         let sign = await signData(message)
@@ -205,13 +205,14 @@ io.on('connection', async (socket) => {
     socket.on('join_room', async ({ encryptedInfo }) => {
         const { roomname, user, password } = await decryptData(encryptedInfo)
         const trimPass = password.trim()
+        const correctPass = await checkPassword(trimPass, roomname)
         if (user in users) {
             socket.emit('join_fail', 'Username taken')
             return
         } else if (rooms[roomname].users.length == rooms[roomname].limit) {
             socket.emit('join_fail', `${roomname} is currently full`)
             return
-        } else if (rooms[roomname].password && !checkPassword(trimPass, roomname)) {
+        } else if (rooms[roomname].password && !correctPass) {
             socket.emit('join_fail', 'Incorrect Password')
             return
         }
@@ -221,7 +222,7 @@ io.on('connection', async (socket) => {
         users[user] = socket.id
         rooms[roomname].users.push(user)
         const message = `${user} has joined the chat`
-        let sign = await signData(message) 
+        let sign = await signData(message)
         io.in(roomname).emit('serverMessage', {
             message,
             sign,
@@ -251,9 +252,7 @@ io.on('connection', async (socket) => {
         socket.room = null
         if (socket.nickname in users) {
             delete users[socket.nickname]
-            
         }
-        console.log(users)
         const payload = { roomInfo: rooms[roomname], keys: getRoomKeys(roomname) }
         let sign = await signData(payload)
         io.in(roomname).emit('user_update', {
