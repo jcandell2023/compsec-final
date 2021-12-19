@@ -228,6 +228,10 @@ async function joinRoom() {
         return
     }
     let roomname = document.getElementById('available-rooms').value
+    if(!roomname){
+        alert('Please select a room')
+        return
+    }
     let password = document.getElementById('joinPassword').value
 
     const serverInfo = {roomname, user, password}
