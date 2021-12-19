@@ -14,6 +14,8 @@ function formatMessage(message, user, isPrivate) {
     if (isPrivate) {
         user += ' (private)'
     }
+    user = escapeHTML(user)
+    message = escapeHTML(message)
     return `<span class="align-middle"><strong>${user}:</strong> ${message}</span>`
 }
 
@@ -109,4 +111,10 @@ function getMessageEncoding(str) {
 function getMessageDecoding(input) {
     let dec = new TextDecoder()
     return dec.decode(input)
+}
+
+function escapeHTML(str) {
+    var p = document.createElement('p')
+    p.appendChild(document.createTextNode(str))
+    return p.innerHTML
 }
