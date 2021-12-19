@@ -15,7 +15,12 @@
     </head>
     <body class="vh-100">
         <div class="container">
-            <div id="loading"><h1 class="text-center">Generating Key</h1></div>
+            <div id="loading" class="text-center">
+                <h1 class="text-center mt-5">Generating Key</h1>
+                <div class="spinner-border" style="width: 5rem; height: 5rem;"  role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+            </div>
             <div id="join-screen" class="p-5 bg-light rounded-3 mt-5 border border-dark">
                 <div id="username-div" class="my-3 row">
                     <label class="col-auto col-form-label">Username:</label>
