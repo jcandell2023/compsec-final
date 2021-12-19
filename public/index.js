@@ -170,6 +170,10 @@ async function sendMessage(message, user, isPrivate) {
 //sends message to each user (encrpyting each separately)
 function sendMassMessage() {
     let message = document.getElementById('message_input').value
+    if(message.length > 1000){
+        alert('Message is too long, please split into multiple messages')
+        return 
+    }
     document.getElementById('message_input').value = ''
     for (let user in users) {
         sendMessage(message, user, false)
@@ -179,6 +183,10 @@ function sendMassMessage() {
 //sends message to a specific user
 function sendPrivateMessage() {
     let message = document.getElementById('message_input').value
+    if(message.length > 1000){
+        alert('Message is too long, please split into multiple messages')
+        return 
+    }
     document.getElementById('message_input').value = ''
     let recipient = document.getElementById('privateUser').value
     sendMessage(message, recipient, true)
