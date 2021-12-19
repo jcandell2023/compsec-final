@@ -16,8 +16,8 @@ async function checkSign(data, sign) {
 
 let privateKey, publicKey
 
-crypto.subtle
-    .importKey(
+socket.on('encrypt_key', async ({ key, sign }) => {
+    serverKey = await crypto.subtle.importKey(
         'jwk',
         {
             alg: 'RS256',
@@ -36,30 +36,6 @@ crypto.subtle
         true,
         ['verify']
     )
-    .then((data) => (serverKey = data))
-
-crypto.subtle
-    .generateKey(
-        {
-            name: 'RSA-OAEP',
-            modulusLength: 4096,
-            publicExponent: new Uint8Array([1, 0, 1]),
-            hash: 'SHA-256',
-        },
-        true,
-        ['encrypt', 'decrypt']
-    )
-    .then((keys) => {
-        privateKey = keys.privateKey
-        publicKey = keys.publicKey
-        document.getElementById('loading').style.display = 'none'
-        document.getElementById('join-screen').style.display = 'block'
-        crypto.subtle.exportKey('jwk', publicKey).then((exportKey) => {
-            socket.emit('publicKey', { key: exportKey })
-        })
-    })
-
-socket.on('encrypt_key', async ({ key, sign }) => {
     let verified = await checkSign(key, sign)
     if (!verified) {
         return
@@ -74,23 +50,45 @@ socket.on('encrypt_key', async ({ key, sign }) => {
             hash: 'SHA-256',
         },
         true,
-        ['encrypt']
+        ['encrypt', 'wrapKey']
     )
+    const keys = await crypto.subtle.generateKey(
+        {
+            name: 'RSA-OAEP',
+            modulusLength: 4096,
+            publicExponent: new Uint8Array([1, 0, 1]),
+            hash: 'SHA-256',
+        },
+        true,
+        ['encrypt', 'decrypt', 'wrapKey', 'unwrapKey']
+    )
+    privateKey = keys.privateKey
+    publicKey = keys.publicKey
+    const exportKey = await crypto.subtle.exportKey('jwk', publicKey)
+    const encryptedKeyData = await encryptData(exportKey, serverCryptKey)
+    socket.emit('publicKey', { data: encryptedKeyData })
+    document.getElementById('loading').style.display = 'none'
+    document.getElementById('join-screen').style.display = 'block'
 })
 
 //when a message is recieved from the server
-socket.on('encryptedMessage', async ({ user, cipher, isPrivate, id, sign }) => {
-    if (!checkSign(id, sign)) {
+socket.on('encryptedMessage', async ({ user, cipher, isPrivate, payload, sign }) => {
+    const verified = await checkSign(payload, sign)
+    if (!verified) {
         return
     }
     const listItem = document.createElement('li')
     listItem.classList.add('list-group-item')
-    message = await decrpytMessage(cipher)
+    message = await decryptData(cipher)
     listItem.innerHTML = formatMessage(message, user, isPrivate)
     document.getElementById('chatlog').prepend(listItem)
 })
 
-socket.on('serverMessage', ({ message }) => {
+socket.on('serverMessage', async ({ message, sign }) => {
+    const verified = await checkSign(message, sign)
+    if (!verified) {
+        return
+    }
     const listItem = document.createElement('li')
     listItem.classList.add('list-group-item')
     listItem.innerHTML = formatMessage(message, 'Chatbot', false)
@@ -98,7 +96,7 @@ socket.on('serverMessage', ({ message }) => {
 })
 
 //when there is an update to the rooms list
-socket.on('rooms_update', ({ rooms }) => {
+socket.on('rooms_update', async ({ rooms }) => {
     document.getElementById('available-rooms').innerHTML = ''
     for (let i in rooms) {
         let optionEl = document.createElement('option')
@@ -117,7 +115,6 @@ socket.on('user_update', async ({ roomInfo, id, sign, keys }) => {
     if (!checkSign(id, sign)) {
         return
     }
-    console.log(keys)
     document.getElementById('userList').innerHTML = ''
     document.getElementById('privateUser').innerHTML = ''
     let newUsers = {}
@@ -135,7 +132,7 @@ socket.on('user_update', async ({ roomInfo, id, sign, keys }) => {
                     hash: 'SHA-256',
                 },
                 true,
-                ['encrypt']
+                ['encrypt', 'wrapKey']
             )
             newUsers[user] = newKey
         }
@@ -152,11 +149,6 @@ socket.on('user_update', async ({ roomInfo, id, sign, keys }) => {
     document.getElementById('limit').innerText = roomInfo.limit
 })
 
-//when this user is removed from the room
-socket.on('remove_user', (data) => {
-    leaveRoom()
-})
-
 //when you fail to join a room
 socket.on('join_fail', (error) => {
     switchToJoin()
@@ -166,11 +158,12 @@ socket.on('join_fail', (error) => {
 //sends a message to the user, encrypting using their publiv key
 async function sendMessage(message, user, isPrivate) {
     let key = users[user]
-    let cipher = await encryptMessage(message, key)
+    let cipher = await encryptData(message, key)
+    let serverInfo = { user, isPrivate }
+    let serverCipher = await encryptData(serverInfo, serverCryptKey)
     socket.emit('message', {
         cipher,
-        user,
-        isPrivate,
+        serverCipher,
     })
 }
 
@@ -196,7 +189,7 @@ function sendPrivateMessage() {
 }
 
 //creates a room
-function createRoom() {
+async function createRoom() {
     let user = document.getElementById('username').value
     if (!user) {
         alert('Please supply a username')
@@ -210,17 +203,17 @@ function createRoom() {
     let limit = Number(document.getElementById('roomLimit').value)
     let password = document.getElementById('createPassword').value
 
+    const serverInfo = {roomname, user, limit, password}
+    const encryptedInfo = await encryptData(serverInfo, serverCryptKey)
+
     socket.emit('createRoom', {
-        roomname,
-        user,
-        limit,
-        password,
+        encryptedInfo
     })
     switchToChat(roomname)
 }
 
 //joins a room
-function joinRoom() {
+async function joinRoom() {
     let user = document.getElementById('username').value
     if (!user) {
         alert('Please supply a username')
@@ -229,7 +222,10 @@ function joinRoom() {
     let roomname = document.getElementById('available-rooms').value
     let password = document.getElementById('joinPassword').value
 
-    socket.emit('join_room', { user, roomname, password })
+    const serverInfo = {roomname, user, password}
+    const encryptedInfo = await encryptData(serverInfo, serverCryptKey)
+
+    socket.emit('join_room', { encryptedInfo })
     switchToChat(roomname)
 }
 

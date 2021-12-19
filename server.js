@@ -15,7 +15,7 @@ const users = {}
 let privateSignKey
 let privateCryptKey
 let publicCryptKey
-let signature
+
 subtle
     .importKey(
         'jwk',
@@ -55,7 +55,7 @@ subtle
             hash: 'SHA-256',
         },
         true,
-        ['encrypt', 'decrypt']
+        ['encrypt', 'decrypt', 'wrapKey', 'unwrapKey']
     )
     .then((data) => {
         privateCryptKey = data.privateKey
@@ -93,6 +93,39 @@ async function signData(data) {
     return sign
 }
 
+async function decryptData(data) {
+    const aesKey = await subtle.unwrapKey(
+        'jwk',
+        data.encryptedKey,
+        privateCryptKey,
+        { name: 'RSA-OAEP' },
+        {
+            name: 'AES-GCM',
+            length: 256,
+        },
+        true,
+        ['encrypt', 'decrypt']
+    )
+    const infoStr = getMessageDecoding(
+        await subtle.decrypt(
+            {
+                name: 'AES-GCM',
+                iv: data.iv,
+            },
+            aesKey,
+            data.cipher
+        )
+    )
+    return JSON.parse(infoStr)
+}
+
+async function getHash(password) {
+    const buffer = await subtle.digest('SHA-256', getMessageEncoding(password))
+    const array = Array.from(new Uint8Array(buffer))
+    const hash = array.map(b => b.toString(16).padStart(2, '0')).join('')
+    return hash
+}
+
 function getRoomKeys(roomname) {
     if (!(roomname in rooms)) {
         return {}
@@ -106,29 +139,34 @@ function getRoomKeys(roomname) {
     return roomKeys
 }
 
-function checkPassword(password, room) {
-    return password == rooms[room].password
+async function checkPassword(password, room) {
+    const hash = await getHash(password)
+    return hash == rooms[room].password
 }
 
 io.on('connection', async (socket) => {
-    //sends rooms to the user who just joined
-    socket.emit('rooms_update', { rooms })
     const keySign = await signData(publicCryptKey)
     socket.emit('encrypt_key', { key: publicCryptKey, sign: keySign })
+    //sends rooms to the user who just joined
+
+    socket.emit('rooms_update', { rooms })
 
     //when a message is recieved it sends it to the correct user
-    socket.on('message', async ({ user, cipher, isPrivate }) => {
-        const { id, sign } = await createSign()
+    socket.on('message', async ({ serverCipher, cipher }) => {
+        const { user, isPrivate } = await decryptData(serverCipher)
+        const payload = { user: socket.nickname, cipher, isPrivate }
+        const sign = await signData(payload)
         io.in(users[user]).emit('encryptedMessage', {
             user: socket.nickname,
             cipher,
             isPrivate,
-            id,
+            payload,
             sign,
         })
     })
 
-    socket.on('createRoom', async ({ roomname, user, limit, password }) => {
+    socket.on('createRoom', async ({ encryptedInfo }) => {
+        const { roomname, user, limit, password } = await decryptData(encryptedInfo)
         if (roomname in rooms) {
             socket.emit('join_fail', 'Room already exists')
             return
@@ -140,34 +178,40 @@ io.on('connection', async (socket) => {
         socket.room = roomname
         socket.nickname = user
         users[user] = socket.id
+        trimPass = password.trim()
+        const passHash = await getHash(trimPass)
         rooms[roomname] = {
             users: [user],
             limit: limit,
-            password: password.trim(),
+            password: passHash,
         }
-        const { id, sign } = await createSign()
+        const message = `${user} has joined the chat`
+        let sign = await signData(message)
         io.in(roomname).emit('serverMessage', {
-            message: `${user} has joined the chat`,
-            id: id,
-            sign: sign,
+            message,
+            sign,
         })
         io.emit('rooms_update', { rooms })
+        const payload = { roomInfo: rooms[roomname], keys: getRoomKeys(roomname) }
+        sign = await signData(payload)
         io.in(roomname).emit('user_update', {
             roomInfo: rooms[roomname],
-            id: id,
-            sign: sign,
+            payload,
+            sign,
             keys: getRoomKeys(roomname),
         })
     })
 
-    socket.on('join_room', async ({ roomname, user, password }) => {
+    socket.on('join_room', async ({ encryptedInfo }) => {
+        const { roomname, user, password } = await decryptData(encryptedInfo)
+        const trimPass = password.trim()
         if (user in users) {
             socket.emit('join_fail', 'Username taken')
             return
         } else if (rooms[roomname].users.length == rooms[roomname].limit) {
             socket.emit('join_fail', `${roomname} is currently full`)
             return
-        } else if (rooms[roomname].password && !checkPassword(password, roomname)) {
+        } else if (rooms[roomname].password && !checkPassword(trimPass, roomname)) {
             socket.emit('join_fail', 'Incorrect Password')
             return
         }
@@ -176,15 +220,17 @@ io.on('connection', async (socket) => {
         socket.nickname = user
         users[user] = socket.id
         rooms[roomname].users.push(user)
-        const { id, sign } = await createSign()
+        const message = `${user} has joined the chat`
+        let sign = await signData(message) 
         io.in(roomname).emit('serverMessage', {
-            message: `${user} has joined the chat`,
-            id,
+            message,
             sign,
         })
+        const payload = { roomInfo: rooms[roomname], keys: getRoomKeys(roomname) }
+        sign = await signData(payload)
         io.in(roomname).emit('user_update', {
             roomInfo: rooms[roomname],
-            id,
+            payload,
             sign,
             keys: getRoomKeys(roomname),
         })
@@ -199,34 +245,33 @@ io.on('connection', async (socket) => {
             if (rooms[roomname].users.length == 0) {
                 delete rooms[roomname]
                 io.emit('rooms_update', { rooms })
-                return
             }
         }
         socket.leave(roomname)
         socket.room = null
         if (socket.nickname in users) {
             delete users[socket.nickname]
+            
         }
-        const { id, sign } = await createSign()
+        console.log(users)
+        const payload = { roomInfo: rooms[roomname], keys: getRoomKeys(roomname) }
+        let sign = await signData(payload)
         io.in(roomname).emit('user_update', {
             roomInfo: rooms[roomname],
-            id,
+            payload,
             sign,
             keys: getRoomKeys(roomname),
         })
+        const message = `${socket.nickname} has left the chat`
+        sign = await signData(message)
         io.in(roomname).emit('serverMessage', {
-            message: `${socket.nickname} has left the chat`,
-            id,
+            message,
             sign,
         })
     })
 
-    socket.on('kick_user', async ({ user }) => {
-        const { id, sign } = await createSign()
-        io.to(users[user]).emit('remove_user', { id, sign })
-    })
-
-    socket.on('publicKey', ({ key }) => {
+    socket.on('publicKey', async ({ data }) => {
+        const key = await decryptData(data)
         keys[socket.id] = key
     })
 
@@ -238,6 +283,7 @@ io.on('connection', async (socket) => {
             )
             if (rooms[roomname].users.length == 0) {
                 delete rooms[roomname]
+
                 io.emit('rooms_update', { rooms })
             }
         }
@@ -245,16 +291,18 @@ io.on('connection', async (socket) => {
         if (socket.nickname in users) {
             delete users[socket.nickname]
         }
-        const { id, sign } = await createSign()
+        const payload = { roomInfo: rooms[roomname], keys: getRoomKeys(roomname) }
+        let sign = await signData(payload)
         io.in(roomname).emit('user_update', {
             roomInfo: rooms[roomname],
-            id,
+            payload,
             sign,
             keys: getRoomKeys(roomname),
         })
+        const message = `${socket.nickname} has left the chat`
+        sign = await signData(message)
         io.in(roomname).emit('serverMessage', {
-            message: `${socket.nickname} has left the chat`,
-            id,
+            message,
             sign,
         })
     })
